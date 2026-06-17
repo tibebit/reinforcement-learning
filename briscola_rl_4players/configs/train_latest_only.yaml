@@ -1,0 +1,15 @@
+seed: 0
+policy_type: linear_softmax
+reward_mode: combined_terminal
+lambda_margin: 0.2
+learning_rate: 0.01
+discount: 1.0
+batch_size: 500
+training_updates: 5000
+snapshot_interval: 50
+max_pool_size: 1
+baseline: batch_mean
+learner_seat_sampling: uniform
+partner_sampling: latest_snapshot
+opponent_sampling: latest_snapshot
+

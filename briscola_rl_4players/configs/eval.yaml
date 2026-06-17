@@ -1,0 +1,16 @@
+test_seed_start: 100000
+test_games: 1000
+paired_deals: true
+greedy_evaluation: true
+baselines:
+  - random
+  - greedy_trick
+  - simple_heuristic
+metrics:
+  - win_rate
+  - draw_rate
+  - loss_rate
+  - mean_point_difference
+  - confidence_interval_95
+  - matchup_matrix
+

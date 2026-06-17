@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+experiments/results/*.json
+experiments/results/*.jsonl
+experiments/results/*.csv
+experiments/results/*.pkl
+experiments/plots/*.png
+experiments/plots/*.pdf

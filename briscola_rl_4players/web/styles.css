@@ -1,0 +1,398 @@
+:root {
+  --felt: #176b52;
+  --felt-dark: #0f4939;
+  --ink: #18221f;
+  --muted: #66716d;
+  --paper: #f7f4eb;
+  --line: #d9d2c1;
+  --gold: #d8a735;
+  --red: #a93636;
+  --blue: #2f5d8c;
+  --green: #357250;
+  --black: #27302d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background: #e9e5d8;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.app-shell {
+  width: min(1180px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 20px 0 32px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 760;
+}
+
+h2 {
+  font-size: 16px;
+  font-weight: 720;
+}
+
+#statusText {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.score-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.score-strip div,
+.controls,
+.lower-grid > div {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.score-strip div {
+  padding: 9px 12px;
+}
+
+.score-strip span,
+.trump-area span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.score-strip strong,
+.trump-area strong {
+  font-size: 22px;
+}
+
+.controls {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.controls label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.controls select,
+.controls input {
+  height: 36px;
+  min-width: 136px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fffdf8;
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+.controls button {
+  height: 36px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 14px;
+  background: var(--felt-dark);
+  color: white;
+  cursor: pointer;
+}
+
+.controls button:hover {
+  background: #0a352a;
+}
+
+.table {
+  position: relative;
+  min-height: 500px;
+  overflow: hidden;
+  border: 1px solid #0d3a2e;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.1), transparent 42%),
+    linear-gradient(135deg, var(--felt), var(--felt-dark));
+  box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.06);
+}
+
+.seat {
+  position: absolute;
+  width: 126px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(6, 36, 29, 0.62);
+  color: white;
+  text-align: center;
+}
+
+.seat span {
+  display: block;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
+.seat strong {
+  font-size: 14px;
+}
+
+.seat.active-turn {
+  outline: 3px solid var(--gold);
+}
+
+.seat-top {
+  top: 18px;
+  left: calc(50% - 63px);
+}
+
+.seat-left {
+  left: 18px;
+  top: calc(50% - 40px);
+}
+
+.seat-right {
+  right: 18px;
+  top: calc(50% - 40px);
+}
+
+.seat-bottom {
+  bottom: 18px;
+  left: calc(50% - 63px);
+}
+
+.center-stack {
+  position: absolute;
+  inset: 100px 170px;
+  display: grid;
+  align-content: center;
+  gap: 18px;
+}
+
+.trump-area {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  color: white;
+  text-align: center;
+}
+
+.trick-area {
+  min-height: 165px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  gap: 12px;
+  align-items: center;
+}
+
+.card,
+.mini-card {
+  position: relative;
+  min-height: 132px;
+  border: 1px solid #cabf9f;
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 10px;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
+  display: grid;
+  align-content: space-between;
+}
+
+.mini-card {
+  width: 82px;
+  min-height: 104px;
+  margin: 0 auto;
+  box-shadow: 0 7px 15px rgba(0, 0, 0, 0.12);
+}
+
+.empty-card {
+  align-content: center;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.card .rank,
+.mini-card .rank {
+  font-weight: 780;
+  font-size: 18px;
+}
+
+.card .suit,
+.mini-card .suit {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.card .points,
+.mini-card .points {
+  justify-self: end;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.suit-cups .rank {
+  color: var(--red);
+}
+
+.suit-coins .rank {
+  color: #9a6b00;
+}
+
+.suit-clubs .rank {
+  color: var(--green);
+}
+
+.suit-swords .rank {
+  color: var(--blue);
+}
+
+.played-card {
+  display: grid;
+  gap: 7px;
+}
+
+.played-card .owner {
+  color: rgba(255, 255, 255, 0.82);
+  text-align: center;
+  font-size: 13px;
+}
+
+.hand-section,
+.partner-section {
+  margin-top: 16px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+#turnHint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hand-area {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 10px;
+}
+
+.compact-hand {
+  grid-template-columns: repeat(auto-fit, minmax(96px, 132px));
+}
+
+.hand-area button.card {
+  width: 100%;
+  border: 1px solid #bdb08d;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.hand-area button.card:hover:not(:disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.2);
+}
+
+.hand-area button.card:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.lower-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.9fr) minmax(280px, 1.1fr);
+  gap: 16px;
+}
+
+.lower-grid > div {
+  padding: 12px;
+}
+
+.history-cards {
+  min-height: 132px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(70px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.event-log {
+  margin: 10px 0 0;
+  padding-left: 22px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    width: min(100vw - 20px, 720px);
+    padding-top: 12px;
+  }
+
+  .topbar,
+  .controls,
+  .lower-grid {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .score-strip {
+    width: 100%;
+  }
+
+  .table {
+    min-height: 430px;
+  }
+
+  .center-stack {
+    inset: 92px 18px 96px;
+  }
+
+  .seat-left,
+  .seat-right {
+    top: auto;
+    bottom: 84px;
+  }
+
+  .trick-area {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
