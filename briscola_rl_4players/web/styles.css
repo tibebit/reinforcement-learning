@@ -153,6 +153,11 @@ h2 {
   background: #0a352a;
 }
 
+.controls button:disabled {
+  background: #bfc7c4;
+  cursor: not-allowed;
+}
+
 .table {
   position: relative;
   min-height: 500px;

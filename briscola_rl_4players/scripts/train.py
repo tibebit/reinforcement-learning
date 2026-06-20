@@ -9,6 +9,7 @@ learner parameters and all frozen snapshots in the pool.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import random
 import sys
@@ -28,42 +29,187 @@ from briscola.reinforce import RewardConfig
 from briscola.self_play import SelfPlayConfig, SelfPlayTrainer, SnapshotPool
 
 
+REWARD_MODES = {"combined_terminal", "terminal_win", "trick_point_dense"}
+BASELINES = {"batch_mean", "none"}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train a four-player Briscola RL policy with REINFORCE.",
     )
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--updates", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=100)
-    parser.add_argument("--learning-rate", type=float, default=0.01)
-    parser.add_argument("--snapshot-interval", type=int, default=10)
-    parser.add_argument("--max-pool-size", type=int, default=20)
+    parser.add_argument("--config", type=Path, default=None, help="Optional YAML config file.")
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--updates", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--learning-rate", type=float, default=None)
+    parser.add_argument("--snapshot-interval", type=int, default=None)
+    parser.add_argument("--max-pool-size", type=int, default=None)
     parser.add_argument("--pool-best-count", type=int, default=None)
     parser.add_argument("--pool-recent-count", type=int, default=None)
     parser.add_argument(
         "--pool-eval-games",
         type=int,
-        default=0,
+        default=None,
         help="Evaluate each saved snapshot on fixed seeds; 0 disables scoring.",
     )
-    parser.add_argument("--pool-eval-seed-start", type=int, default=900_000)
+    parser.add_argument("--pool-eval-seed-start", type=int, default=None)
     parser.add_argument(
         "--reward-mode",
         choices=["combined_terminal", "terminal_win", "trick_point_dense"],
-        default="combined_terminal",
+        default=None,
     )
-    parser.add_argument("--lambda-margin", type=float, default=0.2)
-    parser.add_argument("--baseline", choices=["batch_mean", "none"], default="batch_mean")
-    parser.add_argument("--max-update-norm", type=float, default=5.0)
-    parser.add_argument("--init-scale", type=float, default=0.01)
-    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "experiments/results/checkpoint.json")
-    parser.add_argument("--log", type=Path, default=PROJECT_ROOT / "experiments/results/train_log.jsonl")
-    parser.add_argument("--print-every", type=int, default=10)
+    parser.add_argument("--lambda-margin", type=float, default=None)
+    parser.add_argument("--baseline", choices=["batch_mean", "none"], default=None)
+    parser.add_argument("--max-update-norm", type=float, default=None)
+    parser.add_argument("--init-scale", type=float, default=None)
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--log", type=Path, default=None)
+    parser.add_argument("--print-every", type=int, default=None)
     return parser.parse_args()
 
 
+def load_config(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+
+    yaml = importlib.import_module("yaml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Training config must be a YAML mapping")
+    return data
+
+
+def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
+    config = load_config(args.config)
+
+    policy_type = str(config.get("policy_type", "linear_softmax"))
+    if policy_type != "linear_softmax":
+        raise ValueError(f"Unsupported policy_type: {policy_type}")
+
+    resolved = argparse.Namespace()
+    resolved.config = args.config
+    resolved.seed = _resolve_value(args.seed, config, "seed", 0, int)
+    resolved.updates = _resolve_value(args.updates, config, "training_updates", 100, int)
+    resolved.batch_size = _resolve_value(args.batch_size, config, "batch_size", 100, int)
+    resolved.learning_rate = _resolve_value(
+        args.learning_rate,
+        config,
+        "learning_rate",
+        0.01,
+        float,
+    )
+    resolved.snapshot_interval = _resolve_value(
+        args.snapshot_interval,
+        config,
+        "snapshot_interval",
+        10,
+        int,
+    )
+    resolved.max_pool_size = _resolve_value(
+        args.max_pool_size,
+        config,
+        "max_pool_size",
+        20,
+        int,
+    )
+    resolved.pool_best_count = _resolve_value(
+        args.pool_best_count,
+        config,
+        "pool_best_count",
+        None,
+        int,
+    )
+    resolved.pool_recent_count = _resolve_value(
+        args.pool_recent_count,
+        config,
+        "pool_recent_count",
+        None,
+        int,
+    )
+    resolved.pool_eval_games = _resolve_value(
+        args.pool_eval_games,
+        config,
+        "pool_eval_games",
+        0,
+        int,
+    )
+    resolved.pool_eval_seed_start = _resolve_value(
+        args.pool_eval_seed_start,
+        config,
+        "pool_eval_seed_start",
+        900_000,
+        int,
+    )
+    resolved.reward_mode = _resolve_value(
+        args.reward_mode,
+        config,
+        "reward_mode",
+        "combined_terminal",
+        str,
+    )
+    resolved.lambda_margin = _resolve_value(
+        args.lambda_margin,
+        config,
+        "lambda_margin",
+        0.2,
+        float,
+    )
+    resolved.baseline = _resolve_value(args.baseline, config, "baseline", "batch_mean", str)
+    resolved.max_update_norm = _resolve_value(
+        args.max_update_norm,
+        config,
+        "max_update_norm",
+        5.0,
+        float,
+    )
+    resolved.init_scale = _resolve_value(args.init_scale, config, "init_scale", 0.01, float)
+    resolved.output = Path(
+        _resolve_value(
+            args.output,
+            config,
+            "output",
+            PROJECT_ROOT / "experiments/results/checkpoint.json",
+            Path,
+        )
+    )
+    resolved.log = Path(
+        _resolve_value(
+            args.log,
+            config,
+            "log",
+            PROJECT_ROOT / "experiments/results/train_log.jsonl",
+            Path,
+        )
+    )
+    resolved.print_every = _resolve_value(args.print_every, config, "print_every", 10, int)
+    validate_resolved_args(resolved)
+    return resolved
+
+
+def validate_resolved_args(args: argparse.Namespace) -> None:
+    if args.reward_mode not in REWARD_MODES:
+        raise ValueError(f"Unsupported reward_mode: {args.reward_mode}")
+    if args.baseline not in BASELINES:
+        raise ValueError(f"Unsupported baseline: {args.baseline}")
+
+
+def _resolve_value(
+    cli_value: object,
+    config: dict[str, object],
+    key: str,
+    default: object,
+    cast,
+):
+    value = cli_value if cli_value is not None else config.get(key, default)
+    if value is None:
+        return None
+    return cast(value)
+
+
 def main() -> None:
-    args = parse_args()
+    args = resolve_args(parse_args())
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.log.parent.mkdir(parents=True, exist_ok=True)
 
@@ -147,9 +293,10 @@ def save_checkpoint(
 ) -> None:
     """Write all data needed by evaluate.py to a JSON checkpoint."""
 
-    config = vars(args).copy()
-    config["output"] = str(args.output)
-    config["log"] = str(args.log)
+    config = {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in vars(args).items()
+    }
 
     checkpoint = {
         "format": "briscola_rl_4players_checkpoint_v1",

@@ -75,7 +75,7 @@ PYTHONPATH=. pytest
 Expected result:
 
 ```text
-16 passed
+21 passed
 ```
 
 Run a training job:
@@ -95,7 +95,15 @@ configs/train_pool_selfplay.yaml
 Run evaluation:
 
 ```bash
-PYTHONPATH=. python scripts/evaluate.py --config configs/eval.yaml
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json
+```
+
+Evaluate against specific baselines:
+
+```bash
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent random
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent greedy
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent heuristic
 ```
 
 Start the local playable web interface:
@@ -1377,7 +1385,7 @@ The UI lets you choose:
 - policy for `P3`, the partner;
 - policy for `P4`, the second opponent;
 - learner checkpoint path, by default `experiments/results/checkpoint.json`;
-- stochastic or greedy bot action selection.
+- stochastic or greedy bot action selection;
 - whether learner bots should be updated after each completed human game;
 - the small web-interface learning rate used for that online update.
 
@@ -1385,9 +1393,9 @@ To play with the learner, set `P3 Partner` to `Learner checkpoint`. To play
 against the learner, set `P2 Opponent`, `P4 Opponent`, or both to
 `Learner checkpoint`.
 
-After each human move, the server automatically advances all bot turns until
-the next human decision or the end of the match. The table highlights the
-current player and shows each bot's policy under its seat label.
+Bot turns advance one action at a time with `Next`. Completed tricks remain on
+the table until `Collect Trick` is pressed. The table highlights the current
+player and shows each bot's policy under its seat label.
 
 If `Learn after game` is enabled and at least one bot is using `Learner
 checkpoint`, the interface applies a small REINFORCE update to the learner at

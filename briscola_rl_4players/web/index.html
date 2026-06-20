@@ -42,8 +42,8 @@
         <label>
           P3 Partner
           <select id="partnerPolicy">
-            <option value="learner">Learner checkpoint</option>
             <option value="heuristic">Heuristic</option>
+            <option value="learner">Learner checkpoint</option>
             <option value="greedy">Greedy</option>
             <option value="random">Random</option>
           </select>
@@ -70,7 +70,7 @@
         </label>
         <label class="checkbox-label">
           <span>Learn after game</span>
-          <input id="learnAfterGame" type="checkbox" checked />
+          <input id="learnAfterGame" type="checkbox" />
         </label>
         <label>
           Web LR
@@ -81,6 +81,8 @@
           <input id="seedInput" type="number" placeholder="random" />
         </label>
         <button id="newGameButton" type="button">New Game</button>
+        <button id="nextButton" type="button" disabled>Next</button>
+        <button id="collectButton" type="button" disabled>Collect Trick</button>
       </section>
 
       <section class="table" aria-label="Game table">

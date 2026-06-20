@@ -28,9 +28,13 @@ const elements = {
   learningRateInput: document.getElementById("learningRateInput"),
   seedInput: document.getElementById("seedInput"),
   newGameButton: document.getElementById("newGameButton"),
+  nextButton: document.getElementById("nextButton"),
+  collectButton: document.getElementById("collectButton"),
 };
 
 elements.newGameButton.addEventListener("click", () => startNewGame());
+elements.nextButton.addEventListener("click", () => nextStep());
+elements.collectButton.addEventListener("click", () => collectTrick());
 
 async function startNewGame() {
   elements.newGameButton.disabled = true;
@@ -74,6 +78,44 @@ async function playCard(cardId) {
   }
 }
 
+async function nextStep() {
+  if (!state.sessionId) {
+    return;
+  }
+
+  elements.nextButton.disabled = true;
+  try {
+    const data = await postJson("/api/next", {
+      session_id: state.sessionId,
+    });
+    render(data);
+  } catch (error) {
+    elements.statusText.textContent = error.message;
+    if (state.data) {
+      render(state.data);
+    }
+  }
+}
+
+async function collectTrick() {
+  if (!state.sessionId) {
+    return;
+  }
+
+  elements.collectButton.disabled = true;
+  try {
+    const data = await postJson("/api/collect", {
+      session_id: state.sessionId,
+    });
+    render(data);
+  } catch (error) {
+    elements.statusText.textContent = error.message;
+    if (state.data) {
+      render(state.data);
+    }
+  }
+}
+
 async function postJson(url, payload) {
   const response = await fetch(url, {
     method: "POST",
@@ -101,6 +143,8 @@ function render(data) {
   elements.turnBanner.classList.toggle("waiting", !data.done && !data.human_turn);
   elements.revealedTrump.replaceWith(renderMiniCard(data.revealed_trump, "revealedTrump"));
   elements.revealedTrump = document.getElementById("revealedTrump");
+  elements.nextButton.disabled = !data.can_next;
+  elements.collectButton.disabled = !data.can_collect;
 
   renderSeats(data);
   renderCurrentTrick(data.current_trick);
@@ -175,7 +219,15 @@ function renderLastTrick(data) {
 
 function renderHand(data) {
   elements.handArea.innerHTML = "";
-  elements.turnHint.textContent = data.human_turn ? "Choose a card" : "";
+  if (data.pending_collect) {
+    elements.turnHint.textContent = "Collect the completed trick";
+  } else if (data.human_turn) {
+    elements.turnHint.textContent = "Choose a card";
+  } else if (data.can_next) {
+    elements.turnHint.textContent = "Advance the next bot";
+  } else {
+    elements.turnHint.textContent = "";
+  }
   const legalIds = new Set(data.legal_action_ids);
 
   for (const card of data.human_hand) {
@@ -288,6 +340,9 @@ function labelSuit(suit) {
 }
 
 function turnBannerText(data) {
+  if (data.pending_collect) {
+    return data.message;
+  }
   if (data.done) {
     return data.message;
   }

@@ -32,6 +32,27 @@ class TrainingTests(unittest.TestCase):
 
         self.assertEqual([snapshot.name for snapshot in pool.snapshots], ["snapshot_2"])
 
+    def test_episode_return_matches_terminal_reward_in_terminal_mode(self):
+        extractor = BriscolaFeatureExtractor()
+        learner = LinearSoftmaxPolicy.initialize(extractor, rng=random.Random(10))
+        reward_config = RewardConfig(mode="combined_terminal", lambda_margin=0.2)
+
+        episode = collect_episode(
+            learner_policy=learner,
+            partner_policy=RandomPolicy(),
+            opponent_policy=RandomPolicy(),
+            seed=123,
+            learner_seat=2,
+            reward_config=reward_config,
+        )
+
+        expected_return = terminal_reward(
+            scores=episode.final_scores,
+            learner_team=episode.learner_team,
+            reward_config=reward_config,
+        )
+        self.assertAlmostEqual(episode.episode_return, expected_return)
+
     def test_snapshot_pool_keeps_best_recent_and_time_spaced(self):
         extractor = BriscolaFeatureExtractor()
         rng = random.Random(30)

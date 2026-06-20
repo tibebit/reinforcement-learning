@@ -64,6 +64,9 @@ class WebSession:
     last_completed_trick: list[PlayedCard] = field(default_factory=list)
     last_trick_winner: int | None = None
     last_trick_points: int = 0
+    pending_trick: list[PlayedCard] = field(default_factory=list)
+    pending_trick_winner: int | None = None
+    pending_trick_points: int = 0
     learner_decisions: list[LearnerDecision] = field(default_factory=list)
     learner_update_applied: bool = False
     learner_updated: bool = False
@@ -159,23 +162,50 @@ def new_session(
         session.events.append(
             f"Online learner update enabled, learning rate {learning_rate:g}."
         )
-    advance_to_human(session)
     session_id = uuid.uuid4().hex
     SESSIONS[session_id] = session
     return session_id, session
 
 
-def advance_to_human(session: WebSession) -> None:
-    """Let bots act until it is the human's turn or the match is over."""
+def has_pending_trick(session: WebSession) -> bool:
+    return bool(session.pending_trick)
+
+
+def next_bot_action(session: WebSession) -> None:
+    """Play exactly one non-human action."""
 
     env = session.env
-    while not env.done and env.current_player != session.human_id:
-        player_id = env.current_player
-        obs = env.observe(player_id)
-        policy = session.policies_by_player[player_id]
-        action = policy.select_action(obs, session.rng, greedy=session.greedy_bots)
-        maybe_record_learner_decision(session, policy, obs, action, player_id)
-        play_card(session, action)
+    if env.done:
+        raise ValueError("Game is already finished")
+    if has_pending_trick(session):
+        raise ValueError("Collect the completed trick before continuing")
+    if env.current_player == session.human_id:
+        raise ValueError("It is the human player's turn")
+
+    player_id = env.current_player
+    obs = env.observe(player_id)
+    policy = session.policies_by_player[player_id]
+    action = policy.select_action(obs, session.rng, greedy=session.greedy_bots)
+    maybe_record_learner_decision(session, policy, obs, action, player_id)
+    play_card(session, action)
+
+
+def collect_pending_trick(session: WebSession) -> None:
+    """Move a completed trick from the table into trick history."""
+
+    if not has_pending_trick(session):
+        raise ValueError("No completed trick to collect")
+
+    session.last_completed_trick = list(session.pending_trick)
+    session.last_trick_winner = session.pending_trick_winner
+    session.last_trick_points = session.pending_trick_points
+    session.pending_trick = []
+    session.pending_trick_winner = None
+    session.pending_trick_points = 0
+
+    if session.env.done:
+        session.events.append(final_message(session.env))
+        apply_online_learner_update(session)
 
 
 def maybe_record_learner_decision(
@@ -213,15 +243,12 @@ def play_card(session: WebSession, card: Card) -> None:
     session.events.append(f"P{player_id + 1} played {card_label(card)}.")
 
     if result.trick_completed:
-        session.last_completed_trick = trick_snapshot
-        session.last_trick_winner = result.trick_winner
-        session.last_trick_points = result.trick_points
+        session.pending_trick = trick_snapshot
+        session.pending_trick_winner = result.trick_winner
+        session.pending_trick_points = result.trick_points
         session.events.append(
             f"P{result.trick_winner + 1} won the trick for {result.trick_points} points."
         )
-        if result.done:
-            session.events.append(final_message(env))
-            apply_online_learner_update(session)
 
 
 def apply_online_learner_update(session: WebSession) -> None:
@@ -291,16 +318,21 @@ def final_message(env: FourPlayerBriscolaEnv) -> str:
 
 def state_payload(session_id: str, session: WebSession) -> dict[str, Any]:
     env = session.env
+    pending = has_pending_trick(session)
     current_player = None if env.done else env.current_player
-    human_turn = current_player == session.human_id
+    human_turn = current_player == session.human_id and not pending
     partner_hand_visible = env.partner_hand_visible()
     partner_hand = env.hands[partner_of(session.human_id)] if partner_hand_visible else []
+    table_trick = session.pending_trick if pending else env.current_trick
 
     return {
         "session_id": session_id,
         "done": env.done,
         "human_id": session.human_id,
         "human_turn": human_turn,
+        "pending_collect": pending,
+        "can_next": (not env.done) and (not pending) and (current_player != session.human_id),
+        "can_collect": pending,
         "current_player": current_player,
         "players": player_payloads(session.human_id, session.policies_by_player),
         "scores": {"team_a": env.scores[0], "team_b": env.scores[1]},
@@ -308,7 +340,7 @@ def state_payload(session_id: str, session: WebSession) -> dict[str, Any]:
         "revealed_trump": card_payload(env.revealed_trump),
         "deck_count": len(env.deck),
         "trick_index": env.trick_index,
-        "current_trick": [played_payload(play) for play in env.current_trick],
+        "current_trick": [played_payload(play) for play in table_trick],
         "last_completed_trick": [played_payload(play) for play in session.last_completed_trick],
         "last_trick_winner": session.last_trick_winner,
         "last_trick_points": session.last_trick_points,
@@ -319,7 +351,7 @@ def state_payload(session_id: str, session: WebSession) -> dict[str, Any]:
         if human_turn
         else [],
         "events": session.events[-8:],
-        "message": status_message(env, session.human_id),
+        "message": status_message(session),
         "winner": env.winner_team() if env.done else None,
         "greedy_bots": session.greedy_bots,
         "learn_after_game": session.learn_after_game,
@@ -362,10 +394,13 @@ def player_payloads(
     return payloads
 
 
-def status_message(env: FourPlayerBriscolaEnv, human_id: int) -> str:
+def status_message(session: WebSession) -> str:
+    env = session.env
+    if has_pending_trick(session):
+        return "Trick complete. Press Collect Trick."
     if env.done:
         return final_message(env)
-    if env.current_player == human_id:
+    if env.current_player == session.human_id:
         return "Your turn."
     return f"P{env.current_player + 1} is playing."
 
@@ -438,6 +473,10 @@ class BriscolaRequestHandler(BaseHTTPRequestHandler):
                 self.handle_new()
             elif self.path == "/api/play":
                 self.handle_play()
+            elif self.path == "/api/next":
+                self.handle_next()
+            elif self.path == "/api/collect":
+                self.handle_collect()
             else:
                 self.send_json({"error": "Unknown endpoint"}, HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -480,6 +519,8 @@ class BriscolaRequestHandler(BaseHTTPRequestHandler):
 
         if env.done:
             raise ValueError("Game is already finished")
+        if has_pending_trick(session):
+            raise ValueError("Collect the completed trick before continuing")
         if env.current_player != session.human_id:
             raise ValueError("It is not the human player's turn")
 
@@ -488,7 +529,20 @@ class BriscolaRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("Card is not legal in the current hand")
 
         play_card(session, card)
-        advance_to_human(session)
+        self.send_json(state_payload(session_id, session))
+
+    def handle_next(self) -> None:
+        data = self.read_json()
+        session_id = str(data["session_id"])
+        session = SESSIONS[session_id]
+        next_bot_action(session)
+        self.send_json(state_payload(session_id, session))
+
+    def handle_collect(self) -> None:
+        data = self.read_json()
+        session_id = str(data["session_id"])
+        session = SESSIONS[session_id]
+        collect_pending_trick(session)
         self.send_json(state_payload(session_id, session))
 
     def serve_static(self, url_path: str) -> None:

@@ -85,7 +85,7 @@ PYTHONPATH=. pytest
 Expected result:
 
 ```text
-16 passed
+21 passed
 ```
 
 ## Train an Agent
@@ -109,7 +109,15 @@ configs/train_pool_selfplay.yaml
 Run evaluation:
 
 ```bash
-PYTHONPATH=. python scripts/evaluate.py --config configs/eval.yaml
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json
+```
+
+Evaluate against specific baselines:
+
+```bash
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent random
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent greedy
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent heuristic
 ```
 
 ## Web Demo
@@ -125,6 +133,10 @@ Then open:
 ```text
 http://127.0.0.1:8000
 ```
+
+The web interface supports random, greedy, heuristic, and learner-checkpoint
+bot policies. Bot turns advance manually with `Next`; completed tricks remain
+visible until `Collect Trick` is pressed.
 
 ## Project Structure
 
