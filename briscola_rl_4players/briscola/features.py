@@ -10,7 +10,7 @@ from .rules import trick_points, trick_winner
 
 
 MAX_CARD_POINTS = 11
-MAX_TRICK_POINTS = 42
+MAX_TRICK_POINTS = 44
 MAX_DECK_COUNT = 28
 TOTAL_POINTS = 120
 TOTAL_TRUMPS = 10

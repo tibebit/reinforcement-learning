@@ -9,6 +9,7 @@ const elements = {
   scoreB: document.getElementById("scoreB"),
   trickIndex: document.getElementById("trickIndex"),
   trumpSuit: document.getElementById("trumpSuit"),
+  turnBanner: document.getElementById("turnBanner"),
   revealedTrump: document.getElementById("revealedTrump"),
   deckCount: document.getElementById("deckCount"),
   trickArea: document.getElementById("trickArea"),
@@ -18,8 +19,13 @@ const elements = {
   eventLog: document.getElementById("eventLog"),
   turnHint: document.getElementById("turnHint"),
   partnerHint: document.getElementById("partnerHint"),
+  p2Policy: document.getElementById("p2Policy"),
   partnerPolicy: document.getElementById("partnerPolicy"),
-  opponentPolicy: document.getElementById("opponentPolicy"),
+  p4Policy: document.getElementById("p4Policy"),
+  checkpointInput: document.getElementById("checkpointInput"),
+  botMode: document.getElementById("botMode"),
+  learnAfterGame: document.getElementById("learnAfterGame"),
+  learningRateInput: document.getElementById("learningRateInput"),
   seedInput: document.getElementById("seedInput"),
   newGameButton: document.getElementById("newGameButton"),
 };
@@ -29,15 +35,25 @@ elements.newGameButton.addEventListener("click", () => startNewGame());
 async function startNewGame() {
   elements.newGameButton.disabled = true;
   const payload = {
-    partner: elements.partnerPolicy.value,
-    opponents: elements.opponentPolicy.value,
+    p2_policy: elements.p2Policy.value,
+    partner_policy: elements.partnerPolicy.value,
+    p4_policy: elements.p4Policy.value,
+    checkpoint: elements.checkpointInput.value,
+    greedy_bots: elements.botMode.value === "greedy",
+    learn_after_game: elements.learnAfterGame.checked,
+    learning_rate: Number(elements.learningRateInput.value || 0.005),
     seed: elements.seedInput.value,
   };
 
-  const data = await postJson("/api/new", payload);
-  state.sessionId = data.session_id;
-  render(data);
-  elements.newGameButton.disabled = false;
+  try {
+    const data = await postJson("/api/new", payload);
+    state.sessionId = data.session_id;
+    render(data);
+  } catch (error) {
+    elements.statusText.textContent = error.message;
+  } finally {
+    elements.newGameButton.disabled = false;
+  }
 }
 
 async function playCard(cardId) {
@@ -46,11 +62,16 @@ async function playCard(cardId) {
   }
 
   disableHand(true);
-  const data = await postJson("/api/play", {
-    session_id: state.sessionId,
-    card_id: cardId,
-  });
-  render(data);
+  try {
+    const data = await postJson("/api/play", {
+      session_id: state.sessionId,
+      card_id: cardId,
+    });
+    render(data);
+  } catch (error) {
+    elements.statusText.textContent = error.message;
+    disableHand(false);
+  }
 }
 
 async function postJson(url, payload) {
@@ -75,6 +96,9 @@ function render(data) {
   elements.trickIndex.textContent = `${Math.min(data.trick_index + 1, 10)}/10`;
   elements.trumpSuit.textContent = labelSuit(data.trump_suit);
   elements.deckCount.textContent = data.deck_count;
+  elements.turnBanner.textContent = turnBannerText(data);
+  elements.turnBanner.classList.toggle("done", data.done);
+  elements.turnBanner.classList.toggle("waiting", !data.done && !data.human_turn);
   elements.revealedTrump.replaceWith(renderMiniCard(data.revealed_trump, "revealedTrump"));
   elements.revealedTrump = document.getElementById("revealedTrump");
 
@@ -84,6 +108,10 @@ function render(data) {
   renderHand(data);
   renderPartnerHand(data);
   renderEvents(data.events);
+  elements.newGameButton.textContent =
+    data.done && data.learner_updated
+      ? "New Game with Updated Learner"
+      : "New Game";
 }
 
 function renderSeats(data) {
@@ -92,6 +120,11 @@ function renderSeats(data) {
     seat.classList.toggle("active-turn", data.current_player === player.id);
     seat.querySelector("span").textContent = player.label;
     seat.querySelector("strong").textContent = player.role;
+    const policy = seat.querySelector("small");
+    if (policy) {
+      policy.textContent = shortPolicyName(player.policy);
+      policy.title = player.policy;
+    }
   }
 }
 
@@ -247,11 +280,35 @@ function renderMiniCard(card, id) {
 
 function labelSuit(suit) {
   return {
-    cups: "Cups",
-    coins: "Coins",
-    clubs: "Clubs",
-    swords: "Swords",
+    cups: "🏆",
+    coins: "🪙",
+    clubs: "♣",
+    swords: "⚔",
   }[suit] || "-";
+}
+
+function turnBannerText(data) {
+  if (data.done) {
+    return data.message;
+  }
+  if (data.human_turn) {
+    return "Your turn: choose a card";
+  }
+  const player = data.players.find((entry) => entry.id === data.current_player);
+  if (!player) {
+    return data.message;
+  }
+  return `${player.label} ${player.role} is playing (${shortPolicyName(player.policy)})`;
+}
+
+function shortPolicyName(name) {
+  if (!name) {
+    return "";
+  }
+  if (name.startsWith("learner:")) {
+    return name;
+  }
+  return name.replace("_", " ");
 }
 
 function disableHand(disabled) {

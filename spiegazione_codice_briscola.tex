@@ -1,0 +1,1427 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\geometry{margin=2.4cm}
+\title{Spiegazione dettagliata del codice Python nella cartella \texttt{briscola/}}
+\author{Progetto RL per Briscola a quattro giocatori}
+\date{18 giugno 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Obiettivo del documento}
+
+Questo documento descrive nel dettaglio i file Python presenti nella cartella
+\texttt{briscola/} del progetto. L'obiettivo è chiarire:
+
+\begin{itemize}
+  \item cosa fa ogni file;
+  \item quali classi, funzioni e strutture dati contiene;
+  \item quali parametri possono o devono essere modificati negli esperimenti;
+  \item quali parti sono già implementate;
+  \item quali parti sarebbero utili da implementare in futuro.
+\end{itemize}
+
+La cartella \texttt{briscola/} contiene il nucleo logico del progetto:
+regole del gioco, ambiente, osservazioni, feature, policy, baseline,
+training REINFORCE, self-play, valutazione e replay. I file in \texttt{scripts/}
+e \texttt{web/} usano questo nucleo, ma non sono descritti qui perché non fanno
+parte della cartella richiesta.
+
+\section{Visione d'insieme della cartella}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+File & Responsabilità principale \\
+\midrule
+\texttt{\_\_init\_\_.py} & Esporta le classi principali del package \\
+\texttt{cards.py} & Rappresentazione di carte, mazzo, punti e ranghi \\
+\texttt{rules.py} & Regole pure: squadre, presa, vincitore, punti \\
+\texttt{env.py} & Ambiente completo della partita a quattro giocatori \\
+\texttt{observation.py} & Osservazione legale data alla policy \\
+\texttt{features.py} & Feature $\phi(M,a)$ per la policy lineare \\
+\texttt{policies.py} & Policy softmax lineare e funzioni di gradiente \\
+\texttt{baselines.py} & Policy random, greedy e euristica \\
+\texttt{reinforce.py} & Raccolta traiettorie e update REINFORCE \\
+\texttt{self\_play.py} & Pool di snapshot e training self-play \\
+\texttt{evaluation.py} & Valutazione, metriche, matrice degli scontri \\
+\texttt{replay.py} & Registrazione e salvataggio di partite \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{\texttt{\_\_init\_\_.py}}
+
+\subsection{Scopo}
+
+Il file \texttt{\_\_init\_\_.py} trasforma la cartella \texttt{briscola/} in un
+package Python importabile. Serve a rendere più comodo l'uso delle classi
+principali.
+
+Invece di scrivere:
+
+\begin{verbatim}
+from briscola.env import FourPlayerBriscolaEnv
+\end{verbatim}
+
+si può scrivere:
+
+\begin{verbatim}
+from briscola import FourPlayerBriscolaEnv
+\end{verbatim}
+
+\subsection{Elementi esportati}
+
+Il file esporta:
+
+\begin{itemize}
+  \item \texttt{Card}, \texttt{PlayedCard};
+  \item \texttt{RANKS}, \texttt{SUITS}, \texttt{make\_deck};
+  \item \texttt{FourPlayerBriscolaEnv};
+  \item \texttt{BriscolaFeatureExtractor};
+  \item \texttt{LinearSoftmaxPolicy}.
+\end{itemize}
+
+La lista \texttt{\_\_all\_\_} definisce l'interfaccia pubblica del package.
+Non cambia il funzionamento interno, ma comunica quali oggetti sono pensati per
+essere usati dall'esterno.
+
+\subsection{Parametri modificabili}
+
+Non ci sono veri parametri sperimentali in questo file. Si può modificare la
+lista \texttt{\_\_all\_\_} se si vogliono esportare nuove classi o funzioni.
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Esportare anche \texttt{RandomPolicy}, \texttt{GreedyTrickPolicy},
+  \texttt{SimpleHeuristicPolicy}, \texttt{SelfPlayTrainer} ed
+  \texttt{evaluate\_team\_match}, se si vuole rendere il package più comodo da
+  usare in notebook e script.
+  \item Aggiungere una variabile \texttt{\_\_version\_\_} per tracciare la
+  versione del codice.
+\end{itemize}
+
+\section{\texttt{cards.py}}
+
+\subsection{Scopo}
+
+\texttt{cards.py} definisce la rappresentazione delle carte e del mazzo da 40
+carte. È uno dei file più importanti perché tutte le altre parti del progetto
+dipendono da una rappresentazione coerente delle carte.
+
+Il file non contiene logica di training e non contiene informazione sullo stato
+della partita. Contiene solo:
+
+\begin{itemize}
+  \item semi;
+  \item ranghi;
+  \item valori in punti;
+  \item forza relativa delle carte;
+  \item funzioni per creare e leggere carte.
+\end{itemize}
+
+\subsection{Costanti principali}
+
+\paragraph{\texttt{SUITS}}
+
+\begin{verbatim}
+SUITS = ("cups", "coins", "clubs", "swords")
+\end{verbatim}
+
+Rappresenta i quattro semi. I nomi sono in inglese per mantenere gli
+identificatori ASCII e facilmente serializzabili.
+
+\paragraph{\texttt{RANKS}}
+
+\begin{verbatim}
+RANKS = (
+    "ace", "three", "king", "knight", "jack",
+    "seven", "six", "five", "four", "two",
+)
+\end{verbatim}
+
+L'ordine è dal più forte al più debole nella Briscola:
+
+\[
+Asso > Tre > Re > Cavallo > Fante > Sette > Sei > Cinque > Quattro > Due.
+\]
+
+\paragraph{\texttt{POINTS}}
+
+Associa a ogni rango il valore in punti:
+
+\[
+A=11,\quad 3=10,\quad Re=4,\quad Cavallo=3,\quad Fante=2.
+\]
+
+Le altre carte valgono zero.
+
+\paragraph{\texttt{RANK\_TO\_STRENGTH}}
+
+Trasforma il rango in un numero usato per confrontare due carte dello stesso
+seme o due briscole. Più alto è il valore, più forte è la carta.
+
+\subsection{Classe \texttt{Card}}
+
+\begin{verbatim}
+@dataclass(frozen=True, order=True)
+class Card:
+    suit: str
+    rank: str
+\end{verbatim}
+
+Rappresenta una carta singola. È \texttt{frozen=True}, quindi immutabile. Questo
+è utile perché una carta può essere inserita in \texttt{set}, usata come chiave
+di dizionario e confrontata in modo sicuro.
+
+La classe contiene:
+
+\begin{itemize}
+  \item \texttt{\_\_post\_init\_\_}: controlla che seme e rango siano validi;
+  \item \texttt{points}: restituisce il valore della carta;
+  \item \texttt{strength}: restituisce la forza della carta;
+  \item \texttt{id}: crea una stringa serializzabile, ad esempio
+  \texttt{ace\_of\_cups};
+  \item \texttt{short}: crea una forma compatta usata nei log.
+\end{itemize}
+
+\subsection{Classe \texttt{PlayedCard}}
+
+\begin{verbatim}
+@dataclass(frozen=True)
+class PlayedCard:
+    player_id: int
+    card: Card
+\end{verbatim}
+
+Rappresenta una carta giocata pubblicamente da un certo giocatore. È usata nella
+presa corrente, nella storia pubblica e nel replay.
+
+\subsection{Funzioni}
+
+\paragraph{\texttt{make\_deck()}}
+
+Crea un mazzo ordinato da 40 carte:
+
+\[
+4 \text{ semi} \times 10 \text{ ranghi} = 40.
+\]
+
+\paragraph{\texttt{card\_from\_id(card\_id)}}
+
+Ricostruisce una carta a partire da una stringa come
+\texttt{three\_of\_coins}. È usata soprattutto dall'interfaccia web quando il
+browser invia al server l'ID della carta scelta.
+
+\paragraph{\texttt{total\_deck\_points()}}
+
+Calcola la somma dei punti del mazzo. Deve restituire sempre 120.
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{SUITS}: si può cambiare se si vuole usare una nomenclatura
+  italiana o simbolica.
+  \item \texttt{RANKS}: si può cambiare solo se si modifica la variante del
+  gioco. Nel progetto corrente non andrebbe cambiato.
+  \item \texttt{POINTS}: si può cambiare solo per varianti non standard.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Aggiungere metadati grafici, per esempio simboli o immagini delle carte.
+  \item Gestire più mazzi regionali mantenendo uguali le regole.
+  \item Separare la rappresentazione logica della carta dalla rappresentazione
+  grafica usata nell'interfaccia.
+\end{itemize}
+
+\section{\texttt{rules.py}}
+
+\subsection{Scopo}
+
+\texttt{rules.py} contiene le regole pure della Briscola. Per ``regole pure''
+si intende codice che non dipende dallo stato nascosto dell'ambiente e non
+aggiorna parametri di apprendimento. Questo rende il file facile da testare.
+
+\subsection{Costanti}
+
+\begin{verbatim}
+TEAM_A = 0
+TEAM_B = 1
+NUM_PLAYERS = 4
+\end{verbatim}
+
+Il codice usa giocatori indicizzati da 0 a 3:
+
+\[
+Team A = \{0,2\}, \qquad Team B = \{1,3\}.
+\]
+
+\subsection{Funzioni sui giocatori}
+
+\paragraph{\texttt{team\_of(player\_id)}}
+
+Restituisce la squadra del giocatore. I giocatori pari sono in Team A, i
+giocatori dispari in Team B.
+
+\paragraph{\texttt{partner\_of(player\_id)}}
+
+Restituisce il compagno:
+
+\[
+partner(i) = (i+2) \bmod 4.
+\]
+
+\paragraph{\texttt{left\_opponent\_of} e \texttt{right\_opponent\_of}}
+
+Restituiscono gli avversari seduti a sinistra e a destra secondo l'ordine del
+tavolo.
+
+\paragraph{\texttt{table\_order\_from(player\_id)}}
+
+Restituisce i quattro giocatori in ordine di tavolo partendo da un giocatore.
+È usata per l'ordine di pesca dopo una presa.
+
+\paragraph{\texttt{next\_player(player\_id)}}
+
+Restituisce il giocatore successivo:
+
+\[
+next(i)=(i+1)\bmod 4.
+\]
+
+\subsection{Funzioni sulle prese}
+
+\paragraph{\texttt{trick\_points(trick)}}
+
+Somma i punti delle carte nella presa.
+
+\paragraph{\texttt{card\_beats(challenger, incumbent, lead\_suit, trump\_suit)}}
+
+Decide se una carta supera un'altra. La logica è:
+
+\begin{enumerate}
+  \item una briscola batte una non briscola;
+  \item tra due briscole vince quella di forza maggiore;
+  \item senza briscole, può vincere solo una carta del seme di apertura;
+  \item tra carte del seme di apertura vince quella di forza maggiore.
+\end{enumerate}
+
+\paragraph{\texttt{trick\_winner(trick, trump\_suit)}}
+
+Scorre tutte le carte della presa e restituisce la giocata vincente. Funziona
+anche su prese parziali, quindi può essere usata dalle feature per chiedere:
+``se giocassi questa carta, chi starebbe vincendo ora?''.
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{NUM\_PLAYERS}: nel progetto è fissato a 4. Cambiarlo richiede
+  modifiche profonde in ambiente, osservazioni e feature.
+  \item La composizione delle squadre è codificata in \texttt{team\_of}. Se si
+  volessero posti diversi, questa funzione andrebbe cambiata.
+  \item L'ordine del tavolo è codificato nelle funzioni modulo 4.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Supportare varianti con obbligo di risposta al seme.
+  \item Rendere configurabile la composizione delle squadre.
+  \item Separare completamente ``regole di Briscola'' e ``regole del tavolo'',
+  per poter riusare il codice anche a 2 giocatori.
+\end{itemize}
+
+\section{\texttt{observation.py}}
+
+\subsection{Scopo}
+
+\texttt{observation.py} definisce che cosa vede legalmente un giocatore. Questo
+file è cruciale perché impedisce information leakage, cioè evita che la policy
+veda carte nascoste.
+
+\subsection{Classe \texttt{PlayerObservation}}
+
+\texttt{PlayerObservation} è una dataclass immutabile che contiene:
+
+\begin{itemize}
+  \item identità del giocatore e del compagno;
+  \item avversari;
+  \item mano del giocatore;
+  \item eventuale mano del compagno nella fase finale;
+  \item seme di briscola;
+  \item briscola scoperta, se ancora visibile;
+  \item presa corrente;
+  \item storia pubblica delle carte giocate;
+  \item vincitori delle prese;
+  \item punteggi;
+  \item leader della presa;
+  \item giocatore corrente;
+  \item numero di carte rimaste nel mazzo;
+  \item indice della presa;
+  \item posizione nella presa.
+\end{itemize}
+
+\subsection{Regola sulla mano del compagno}
+
+Nel progetto è stata aggiunta questa regola:
+
+\begin{quote}
+Quando il mazzo è vuoto e iniziano le ultime tre prese, i compagni di squadra
+possono vedere reciprocamente le proprie carte.
+\end{quote}
+
+Per questo l'osservazione contiene:
+
+\begin{itemize}
+  \item \texttt{partner\_hand\_visible};
+  \item \texttt{partner\_hand}.
+\end{itemize}
+
+Prima della fase finale:
+
+\begin{verbatim}
+partner_hand_visible = False
+partner_hand = ()
+\end{verbatim}
+
+Nella fase finale:
+
+\begin{verbatim}
+partner_hand_visible = True
+partner_hand = tuple(carte_del_compagno)
+\end{verbatim}
+
+\subsection{Proprietà utili}
+
+\begin{itemize}
+  \item \texttt{legal\_actions}: coincide con la mano del giocatore;
+  \item \texttt{score\_difference}: punteggio squadra meno punteggio avversario;
+  \item \texttt{cards\_played\_count}: numero di carte pubblicamente giocate;
+  \item \texttt{opponents}: coppia degli avversari.
+\end{itemize}
+
+\subsection{Parametri modificabili}
+
+Non ci sono iperparametri numerici. Si può però decidere quali campi rendere
+visibili alla policy. Questa è una scelta metodologica importante.
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Aggiungere una rappresentazione della sequenza completa delle prese.
+  \item Aggiungere un belief state approssimato sulle carte nascoste.
+  \item Aggiungere osservazioni diverse per esperimenti di ablation, ad esempio
+  una versione senza memoria delle carte giocate.
+\end{itemize}
+
+\section{\texttt{env.py}}
+
+\subsection{Scopo}
+
+\texttt{env.py} implementa l'ambiente di gioco completo. È il file che mantiene
+lo stato nascosto della partita:
+
+\begin{itemize}
+  \item mani di tutti i giocatori;
+  \item mazzo residuo ordinato;
+  \item briscola;
+  \item presa corrente;
+  \item punteggi;
+  \item giocatore corrente;
+  \item storia pubblica.
+\end{itemize}
+
+La policy non deve accedere direttamente a questi campi. Deve usare
+\texttt{observe(player\_id)}.
+
+\subsection{Classe \texttt{StepResult}}
+
+È il risultato di una chiamata a \texttt{env.step(card)}. Contiene:
+
+\begin{itemize}
+  \item nuova osservazione, oppure \texttt{None} se la partita è finita;
+  \item flag \texttt{done};
+  \item flag \texttt{trick\_completed};
+  \item vincitore della presa;
+  \item punti della presa;
+  \item punteggi aggiornati.
+\end{itemize}
+
+\subsection{Classe \texttt{FourPlayerBriscolaEnv}}
+
+È l'ambiente principale. I parametri iniziali sono:
+
+\begin{verbatim}
+seed: int | None = None
+start_player: int = 0
+\end{verbatim}
+
+\texttt{seed} controlla la riproducibilità della partita. \texttt{start\_player}
+decide chi apre la prima presa.
+
+\subsection{Metodo \texttt{reset}}
+
+Inizializza una partita:
+
+\begin{enumerate}
+  \item crea il mazzo da 40 carte;
+  \item mischia il mazzo usando il seed;
+  \item distribuisce 3 carte a ogni giocatore;
+  \item rivela una carta di briscola;
+  \item mette la carta rivelata in fondo al mazzo;
+  \item inizializza punteggi, storia e presa corrente.
+\end{enumerate}
+
+Dopo la distribuzione iniziale:
+
+\[
+40 - 4\cdot 3 = 28
+\]
+
+quindi restano 28 carte nel mazzo. Dopo 7 prese, il mazzo si svuota. Poi si
+giocano le ultime 3 prese senza pescare. La partita termina dopo 10 prese.
+
+\subsection{Metodo \texttt{observe}}
+
+Costruisce una \texttt{PlayerObservation}. È il punto in cui viene applicata la
+separazione tra stato interno e informazione legale.
+
+La mano del compagno viene inclusa solo se:
+
+\begin{verbatim}
+self.partner_hand_visible()
+\end{verbatim}
+
+cioè se il mazzo è vuoto.
+
+\subsection{Metodo \texttt{step}}
+
+Esegue una giocata:
+
+\begin{enumerate}
+  \item controlla che la carta sia legale;
+  \item rimuove la carta dalla mano del giocatore;
+  \item aggiunge la carta alla presa corrente e alla storia pubblica;
+  \item se la presa ha 4 carte, risolve il vincitore;
+  \item assegna i punti alla squadra vincitrice;
+  \item fa pescare i giocatori in ordine dal vincitore della presa;
+  \item aggiorna leader e giocatore corrente;
+  \item controlla se la partita è terminata.
+\end{enumerate}
+
+\subsection{Metodo \texttt{\_draw\_after\_trick}}
+
+Dopo una presa, se il mazzo non è vuoto, pesca una carta per giocatore partendo
+dal vincitore. Quando viene pescata la briscola rivelata, \texttt{revealed\_trump}
+diventa \texttt{None}.
+
+\subsection{Metodo \texttt{\_is\_terminal}}
+
+La partita termina quando:
+
+\begin{itemize}
+  \item il mazzo è vuoto;
+  \item la presa corrente è vuota;
+  \item tutte le mani sono vuote;
+  \item sono state giocate 10 prese.
+\end{itemize}
+
+\subsection{Metodo \texttt{assert\_invariants}}
+
+Serve nei test. Controlla:
+
+\begin{itemize}
+  \item il totale delle carte è sempre 40;
+  \item non ci sono duplicati;
+  \item a fine partita i punti sommano 120;
+  \item ogni giocatore ha giocato 10 carte.
+\end{itemize}
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{seed}: da cambiare per generare partite diverse.
+  \item \texttt{start\_player}: utile per valutazioni bilanciate.
+  \item Regola \texttt{partner\_hand\_visible}: può essere modificata se si vuole
+  rendere la mano del compagno visibile in un momento diverso.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Un'interfaccia stile Gymnasium: \texttt{reset}, \texttt{step},
+  \texttt{action\_space}, \texttt{observation\_space}.
+  \item Salvataggio completo dello stato per riprodurre una partita a metà.
+  \item Supporto a più varianti: senza pesca, a 2 giocatori, con obbligo di
+  risposta al seme.
+  \item Validazione formale più ampia delle invarianti dopo ogni singola giocata.
+\end{itemize}
+
+\section{\texttt{features.py}}
+
+\subsection{Scopo}
+
+\texttt{features.py} costruisce il vettore:
+
+\[
+\phi(M_t,a)
+\]
+
+dove \(M_t\) è l'osservazione/memoria legale del giocatore e \(a\) è una carta
+candidata nella mano. Questo vettore è l'input della policy softmax lineare.
+
+La policy non riceve direttamente lo stato interno; riceve solo feature costruite
+da \texttt{PlayerObservation}.
+
+\subsection{Costanti di normalizzazione}
+
+Il file definisce:
+
+\begin{itemize}
+  \item \texttt{MAX\_CARD\_POINTS = 11};
+  \item \texttt{MAX\_TRICK\_POINTS = 44};
+  \item \texttt{MAX\_DECK\_COUNT = 28};
+  \item \texttt{TOTAL\_POINTS = 120};
+  \item \texttt{TOTAL\_TRUMPS = 10}.
+\end{itemize}
+
+Servono per portare molte feature in intervalli simili, di solito tra 0 e 1.
+Questo rende il learning rate più stabile.
+
+\texttt{MAX\_TRICK\_POINTS} vale 44 perché in una presa a quattro giocatori
+possono teoricamente comparire i quattro Assi, ognuno da 11 punti. Il valore
+\texttt{MAX\_DECK\_COUNT} vale invece 28 perché, dopo aver distribuito le tre
+carte iniziali a ciascuno dei quattro giocatori, nel mazzo restano:
+\[
+40 - 4 \cdot 3 = 28
+\]
+carte da pescare.
+
+\subsection{Classe \texttt{BriscolaFeatureExtractor}}
+
+La classe contiene:
+
+\begin{itemize}
+  \item \texttt{feature\_names}: lista ordinata dei nomi delle feature;
+  \item \texttt{size()}: numero di feature;
+  \item \texttt{extract(obs, card)}: restituisce il vettore numerico.
+\end{itemize}
+
+Il codice attuale usa 68 feature.
+
+\subsection{Categorie di feature}
+
+\paragraph{Feature della carta}
+
+Descrivono la carta candidata:
+
+\begin{itemize}
+  \item punti;
+  \item forza del rango;
+  \item se è briscola;
+  \item se è Asso, Tre, carico o carta bassa.
+\end{itemize}
+
+\paragraph{Feature della presa}
+
+Descrivono la presa corrente:
+
+\begin{itemize}
+  \item posizione nella presa;
+  \item punti presenti nella presa;
+  \item se il compagno o l'avversario sta vincendo;
+  \item se la carta candidata vincerebbe ora;
+  \item se batterebbe il compagno;
+  \item se batterebbe l'avversario.
+\end{itemize}
+
+\paragraph{Feature sui giocatori ancora da muovere}
+
+Misurano il rischio:
+
+\begin{itemize}
+  \item quanti giocatori devono ancora agire;
+  \item quanti di questi sono avversari;
+  \item se il compagno deve ancora agire.
+\end{itemize}
+
+\paragraph{Feature sulla mano del compagno}
+
+Sono attive solo nella fase finale:
+
+\begin{itemize}
+  \item \texttt{partner\_hand\_visible};
+  \item punti nella mano del compagno;
+  \item numero di briscole del compagno;
+  \item numero di carte alte del compagno;
+  \item se il compagno può vincere la presa corrente.
+\end{itemize}
+
+\paragraph{Feature di memoria pubblica}
+
+Usano carte già osservate:
+
+\begin{itemize}
+  \item carte giocate;
+  \item briscole giocate;
+  \item briscole non osservate;
+  \item Assi e Tre già usciti;
+  \item carte alte già uscite;
+  \item carte più forti dello stesso seme non osservate;
+  \item briscole più forti non osservate.
+\end{itemize}
+
+\paragraph{Feature di punteggio e fase}
+
+Includono:
+
+\begin{itemize}
+  \item punteggio della squadra;
+  \item punteggio avversario;
+  \item differenza punti;
+  \item squadra avanti o indietro;
+  \item carte nel mazzo;
+  \item fase iniziale, centrale, finale;
+  \item mazzo vuoto.
+\end{itemize}
+
+\paragraph{Feature di interazione}
+
+Sono prodotti tra segnali semplici. Per esempio:
+
+\[
+\texttt{trump\_x\_trick\_points}
+=
+\texttt{is\_trump}\cdot \texttt{trick\_points}.
+\]
+
+Servono perché una policy lineare non può imparare da sola condizioni come:
+``gioca briscola solo se la presa vale molto''.
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{feature\_names}: si può passare una lista custom per fare
+  ablation.
+  \item Costanti di normalizzazione: devono essere coerenti con il gioco.
+  \item Soglie euristiche interne, ad esempio cosa viene considerato
+  \texttt{high\_card} o \texttt{risky\_card}.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Un estrattore \texttt{NoMemoryFeatureExtractor} per l'ablation senza
+  memoria.
+  \item Feature basate su belief approssimato.
+  \item Test automatici più dettagliati sui valori delle feature in stati noti.
+  \item Feature per distinguere meglio sicurezza e rischio quando devono ancora
+  giocare più avversari.
+\end{itemize}
+
+\section{\texttt{policies.py}}
+
+\subsection{Scopo}
+
+\texttt{policies.py} definisce l'interfaccia comune delle policy e implementa la
+policy principale del progetto: una softmax lineare con action mask.
+
+\subsection{Protocollo \texttt{Policy}}
+
+Definisce i metodi minimi che ogni policy deve avere:
+
+\begin{itemize}
+  \item \texttt{action\_probabilities(obs)};
+  \item \texttt{select\_action(obs, rng, greedy=False)}.
+\end{itemize}
+
+Questo permette di usare nello stesso ambiente policy diverse: learner, random,
+greedy, euristica, snapshot.
+
+\subsection{Classe \texttt{LinearSoftmaxPolicy}}
+
+È la policy appresa. Per ogni azione legale \(a\):
+
+\[
+h_\theta(M,a) = \theta^\top \phi(M,a).
+\]
+
+Poi:
+
+\[
+\pi_\theta(a|M)
+=
+\frac{\exp(h_\theta(M,a))}
+{\sum_{a'\in H}\exp(h_\theta(M,a'))}.
+\]
+
+Solo le carte nella mano sono considerate. Questo realizza l'action masking.
+
+\subsection{Metodi principali}
+
+\paragraph{\texttt{initialize}}
+
+Crea una policy con pesi casuali piccoli. Parametri modificabili:
+
+\begin{itemize}
+  \item \texttt{scale}: ampiezza iniziale dei pesi;
+  \item \texttt{rng}: generatore casuale;
+  \item \texttt{name}: nome della policy.
+\end{itemize}
+
+\paragraph{\texttt{action\_preferences}}
+
+Calcola \(h_\theta(M,a)\) per ogni carta legale.
+
+\paragraph{\texttt{action\_probabilities}}
+
+Applica la softmax. Il codice sottrae il massimo prima dell'esponenziale per
+stabilità numerica:
+
+\[
+\exp(h_a - \max_b h_b).
+\]
+
+\paragraph{\texttt{select\_action}}
+
+Se \texttt{greedy=False}, campiona secondo le probabilità. Se
+\texttt{greedy=True}, sceglie la carta con probabilità massima.
+
+\paragraph{\texttt{grad\_log\_probability}}
+
+Calcola:
+
+\[
+\nabla_\theta \log \pi_\theta(a_t|M_t)
+=
+\phi(M_t,a_t)
+-
+\sum_{a'\in H_t}
+\pi_\theta(a'|M_t)\phi(M_t,a').
+\]
+
+Questa è la formula usata da REINFORCE.
+
+\paragraph{\texttt{apply\_gradient}}
+
+Aggiorna i parametri:
+
+\[
+\theta \leftarrow \theta + \alpha g.
+\]
+
+Può anche tagliare il gradiente con \texttt{max\_update\_norm}.
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{theta}: parametri appresi.
+  \item \texttt{scale}: inizializzazione.
+  \item \texttt{greedy}: modalità di selezione azione.
+  \item \texttt{max\_update\_norm}: clipping del gradiente.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Salvataggio e caricamento della policy direttamente nella classe.
+  \item Temperatura della softmax:
+  \[
+  \pi(a|M) \propto \exp(h(M,a)/T).
+  \]
+  \item Policy neurale come estensione, mantenendo la stessa interfaccia.
+  \item Logging delle probabilità per spiegare le decisioni all'utente.
+\end{itemize}
+
+\section{\texttt{baselines.py}}
+
+\subsection{Scopo}
+
+\texttt{baselines.py} contiene policy non apprese, usate come confronto e
+sanity check. Sono fondamentali per capire se il learner ha imparato qualcosa.
+
+\subsection{\texttt{RandomPolicy}}
+
+Sceglie uniformemente tra le carte legali:
+
+\[
+\pi(a|H)=\frac{1}{|H|}.
+\]
+
+È la baseline minima.
+
+\subsection{\texttt{GreedyTrickPolicy}}
+
+È una policy miope: valuta solo la presa corrente. Se una carta sta vincendo la
+presa, dà valore ai punti immediati. Se non può vincere, preferisce sacrificare
+carte di basso valore.
+
+Non considera:
+
+\begin{itemize}
+  \item carte future;
+  \item memoria strategica;
+  \item punteggio globale;
+  \item cooperazione di lungo periodo.
+\end{itemize}
+
+\subsection{\texttt{SimpleHeuristicPolicy}}
+
+È un riferimento esterno più ragionevole. Alcune regole:
+
+\begin{itemize}
+  \item se il compagno sta vincendo, carica punti;
+  \item se il giocatore può vincere, valuta i punti della presa;
+  \item evita di sprecare briscole su prese povere;
+  \item penalizza il dono di carichi agli avversari.
+\end{itemize}
+
+\subsection{Parametri modificabili}
+
+Nelle baseline ci sono pesi euristici come:
+
+\begin{itemize}
+  \item \texttt{0.05 * card.points};
+  \item \texttt{0.5 * card.points};
+  \item \texttt{2.0 * candidate\_points};
+  \item penalità \texttt{5.0} per carichi dati agli avversari.
+\end{itemize}
+
+Questi numeri non sono appresi. Sono scelte manuali. Se vengono cambiati, va
+documentato perché la baseline cambia.
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Baseline più forti, ma sempre dichiarate e non usate per addestrare il
+  learner principale.
+  \item Baseline ``conservativa'' e ``aggressiva'' per stress test.
+  \item Baseline che usa la mano del compagno nella fase finale.
+\end{itemize}
+
+\section{\texttt{reinforce.py}}
+
+\subsection{Scopo}
+
+\texttt{reinforce.py} implementa l'algoritmo REINFORCE con baseline.
+
+L'update è:
+
+\[
+\theta
+\leftarrow
+\theta
++
+\alpha
+(G_t-b_t)
+\nabla_\theta \log \pi_\theta(a_t|M_t).
+\]
+
+\subsection{\texttt{RewardConfig}}
+
+Contiene:
+
+\begin{itemize}
+  \item \texttt{mode}: tipo di reward;
+  \item \texttt{lambda\_margin}: peso del margine nella reward combinata.
+\end{itemize}
+
+Default:
+
+\begin{verbatim}
+mode = "combined_terminal"
+lambda_margin = 0.2
+\end{verbatim}
+
+\subsection{Reward disponibili}
+
+\paragraph{\texttt{terminal\_win}}
+
+\[
+R_T =
+\begin{cases}
++1 & \text{se vince la squadra del learner},\\
+0 & \text{se pareggia},\\
+-1 & \text{se perde}.
+\end{cases}
+\]
+
+\paragraph{\texttt{combined\_terminal}}
+
+\[
+R_T =
+\operatorname{sign}(\Delta_T)
++
+\lambda \frac{\Delta_T}{120}.
+\]
+
+\paragraph{\texttt{trick\_point\_dense}}
+
+Assegna punti positivi o negativi a ogni presa in base a chi la vince.
+
+\subsection{\texttt{collect\_episode}}
+
+Gioca una partita completa e salva solo le decisioni del learner attivo. Il
+compagno e gli avversari sono policy esterne congelate.
+
+Per ogni decisione del learner salva:
+
+\begin{itemize}
+  \item osservazione;
+  \item azione;
+  \item indice temporale globale;
+  \item return-to-go, calcolato dopo la fine.
+\end{itemize}
+
+\subsection{Return-to-go}
+
+Dopo la partita:
+
+\[
+G_t = \sum_{k=t}^{T-1} R_{k+1}.
+\]
+
+Nel codice:
+
+\begin{verbatim}
+step.reward_to_go = sum(rewards[step.global_index:])
+\end{verbatim}
+
+Questo corrisponde a \(\gamma=1\).
+
+\subsection{\texttt{reinforce\_update}}
+
+Applica l'update su un batch di episodi. La baseline default è:
+
+\[
+b = \text{media dei return-to-go nel batch}.
+\]
+
+Poi per ogni decisione:
+
+\[
+advantage = G_t-b.
+\]
+
+Se l'advantage è positivo, l'azione viene rinforzata. Se è negativo, viene
+penalizzata.
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{learning\_rate}: dimensione del passo di aggiornamento.
+  \item \texttt{baseline}: \texttt{batch\_mean} oppure \texttt{none}.
+  \item \texttt{max\_update\_norm}: clipping del gradiente.
+  \item \texttt{reward\_config.mode}: reward usata.
+  \item \texttt{lambda\_margin}: peso del margine nella reward combinata.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Baseline leave-one-out.
+  \item Normalizzazione degli advantage nel batch.
+  \item Critic appreso come estensione actor-critic.
+  \item Entropy bonus per mantenere esplorazione.
+  \item Aggiornamento con più learner nella stessa squadra, come ablation.
+\end{itemize}
+
+\section{\texttt{self\_play.py}}
+
+\subsection{Scopo}
+
+\texttt{self\_play.py} implementa il self-play con pool storico di snapshot.
+Serve a evitare che il learner impari solo contro una singola policy.
+
+\subsection{\texttt{Snapshot}}
+
+Contiene:
+
+\begin{itemize}
+  \item nome;
+  \item vettore \(\theta\);
+  \item indice dell'update in cui è stato salvato;
+  \item eventuale \texttt{evaluation\_score}, cioè uno score esterno ottenuto
+  valutando la snapshot su seed fissati contro baseline o policy di test.
+\end{itemize}
+
+\subsection{\texttt{SnapshotPool}}
+
+È il contenitore delle policy congelate. Salva solo i vettori di parametri, non
+oggetti policy vivi. Quando campiona, crea una nuova \texttt{LinearSoftmaxPolicy}
+con quei pesi.
+
+\subsection{Gestione della dimensione del pool}
+
+La versione aggiornata non assume più che le snapshot migliori siano sempre
+quelle più recenti. Se il pool supera \texttt{max\_size}, il codice conserva una
+combinazione di:
+
+\begin{itemize}
+  \item la snapshot iniziale;
+  \item le migliori snapshot valutate, se è disponibile
+  \texttt{evaluation\_score};
+  \item alcune snapshot recenti;
+  \item alcune snapshot più vecchie distribuite nel tempo.
+\end{itemize}
+
+In questo modo il pool rimane piccolo, ma non collassa soltanto sulle ultime
+versioni della policy. Questo è importante perché nel self-play il progresso
+non è necessariamente monotono: una policy recente può battere l'ultima
+avversaria ma perdere contro una strategia precedente.
+
+Il caso \texttt{max\_size = 1} è trattato come esperimento \emph{latest-only}:
+il pool conserva solo l'ultima snapshot.
+
+\paragraph{Snapshot migliori}
+Il campo \texttt{evaluation\_score} non viene prodotto automaticamente dalla
+partita di training. È uno score esterno, calcolato per esempio valutando la
+snapshot contro random, greedy ed euristica su seed fissati. Questa separazione
+evita di confondere il ritorno rumoroso del batch di training con una misura
+di qualità più stabile.
+
+\paragraph{Snapshot distribuite nel tempo}
+Se rimane spazio nel pool dopo aver conservato iniziale, migliori e recenti, il
+codice seleziona alcune snapshot vecchie in modo distribuito lungo gli update.
+Questa scelta mantiene diversità storica e rende meno probabile dimenticare
+strategie che erano utili in fasi precedenti del self-play.
+
+\subsection{\texttt{SelfPlayConfig}}
+
+Parametri principali:
+
+\begin{itemize}
+  \item \texttt{batch\_size};
+  \item \texttt{learning\_rate};
+  \item \texttt{snapshot\_interval};
+  \item \texttt{max\_update\_norm};
+  \item \texttt{baseline};
+  \item \texttt{reward\_config}.
+\end{itemize}
+
+\subsection{\texttt{SelfPlayTrainer}}
+
+Per ogni update:
+
+\begin{enumerate}
+  \item genera un batch di partite;
+  \item campiona il posto del learner;
+  \item campiona partner e avversari dal pool;
+  \item raccoglie episodi;
+  \item applica REINFORCE solo al learner;
+  \item ogni \texttt{snapshot\_interval} salva una nuova snapshot.
+\end{enumerate}
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{batch\_size}: più alto riduce varianza ma costa tempo.
+  \item \texttt{learning\_rate}: più alto apprende più velocemente ma può
+  destabilizzare.
+  \item \texttt{snapshot\_interval}: controlla quanto spesso il pool cresce.
+  \item \texttt{max\_size}: dimensione massima del pool.
+  \item \texttt{best\_count}: quante snapshot con score migliore mantenere.
+  \item \texttt{recent\_count}: quante snapshot recenti mantenere.
+  \item \texttt{keep\_initial}: se mantenere sempre la policy iniziale.
+  \item \texttt{evaluation\_score}: score opzionale usato per identificare
+  snapshot forti.
+  \item Strategia di campionamento: attualmente uniforme.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Campionamento non uniforme, per esempio più peso a snapshot forti o
+  difficili.
+  \item Valutazione più ricca delle snapshot tramite matrice degli scontri.
+  \item Pool di partner distinto dal pool di avversari.
+  \item Salvataggio automatico del pool su disco.
+\end{itemize}
+
+\section{\texttt{evaluation.py}}
+
+\subsection{Scopo}
+
+\texttt{evaluation.py} contiene funzioni per confrontare policy congelate senza
+aggiornare i parametri.
+
+\subsection{\texttt{MatchResult}}
+
+Risultato di una partita:
+
+\begin{itemize}
+  \item punteggi finali;
+  \item squadra vincitrice;
+  \item differenza punti dal punto di vista del Team A.
+\end{itemize}
+
+\subsection{\texttt{EvaluationResult}}
+
+Risultato aggregato su molte partite:
+
+\begin{itemize}
+  \item numero di partite;
+  \item win rate;
+  \item draw rate;
+  \item loss rate;
+  \item differenza media punti;
+  \item standard error;
+  \item intervallo di confidenza al 95\%.
+\end{itemize}
+
+\subsection{\texttt{play\_match}}
+
+Gioca una partita usando un dizionario:
+
+\begin{verbatim}
+policies_by_player = {
+    0: policy_a,
+    1: policy_b,
+    2: policy_a,
+    3: policy_b,
+}
+\end{verbatim}
+
+Non fa training. Serve solo per valutazione.
+
+\subsection{\texttt{evaluate\_team\_match}}
+
+Confronta due policy come squadre:
+
+\[
+policy\_a = Team A, \qquad policy\_b = Team B.
+\]
+
+Se \texttt{paired=True}, ripete la stessa partita scambiando i posti:
+
+\[
+policy\_b = Team A, \qquad policy\_a = Team B.
+\]
+
+Questo riduce l'effetto della fortuna del seed.
+
+\subsection{\texttt{matchup\_matrix}}
+
+Costruisce una matrice degli scontri tra molte policy. È utile per individuare:
+
+\begin{itemize}
+  \item miglioramento reale;
+  \item cicli;
+  \item regressioni;
+  \item overfitting contro singole snapshot.
+\end{itemize}
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item lista dei seed;
+  \item \texttt{paired};
+  \item \texttt{greedy};
+  \item insieme di policy da confrontare.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Test statistici più robusti.
+  \item Bootstrap degli intervalli di confidenza.
+  \item Salvataggio automatico in CSV.
+  \item Metriche diagnostiche: uso briscole, carichi, comportamento in finale.
+\end{itemize}
+
+\section{\texttt{replay.py}}
+
+\subsection{Scopo}
+
+\texttt{replay.py} permette di registrare una partita e salvarla in JSON.
+
+\subsection{Classe \texttt{Replay}}
+
+Contiene:
+
+\begin{itemize}
+  \item seed;
+  \item start player;
+  \item seme di briscola;
+  \item lista delle azioni;
+  \item punteggi finali.
+\end{itemize}
+
+\subsection{\texttt{record\_match}}
+
+Gioca una partita completa con policy fissate e salva, per ogni azione:
+
+\begin{itemize}
+  \item giocatore;
+  \item carta;
+  \item se la presa è stata completata;
+  \item vincitore della presa;
+  \item punti della presa;
+  \item punteggi dopo la giocata.
+\end{itemize}
+
+\subsection{\texttt{save\_replay} e \texttt{load\_replay}}
+
+Salvano e caricano il replay in formato JSON.
+
+\subsection{Parametri modificabili}
+
+\begin{itemize}
+  \item \texttt{seed};
+  \item \texttt{start\_player};
+  \item \texttt{greedy}, per scegliere valutazione deterministica o stocastica.
+\end{itemize}
+
+\subsection{Cosa implementare in futuro}
+
+\begin{itemize}
+  \item Salvare anche le probabilità assegnate alle azioni.
+  \item Salvare le feature al momento della decisione.
+  \item Aggiungere un visualizzatore di replay.
+  \item Rendere possibile riprendere una partita da un replay parziale.
+\end{itemize}
+
+\section{Parametri principali da cambiare negli esperimenti}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Parametro & File & Significato \\
+\midrule
+\texttt{learning\_rate} & \texttt{reinforce.py}, \texttt{self\_play.py} & Passo di aggiornamento \\
+\texttt{batch\_size} & \texttt{self\_play.py} & Partite per update \\
+\texttt{snapshot\_interval} & \texttt{self\_play.py} & Ogni quanti update salvare snapshot \\
+\texttt{max\_size} & \texttt{self\_play.py} & Dimensione massima del pool \\
+\texttt{best\_count} & \texttt{self\_play.py} & Quante snapshot valutate come migliori conservare \\
+\texttt{recent\_count} & \texttt{self\_play.py} & Quante snapshot recenti conservare \\
+\texttt{pool\_eval\_games} & \texttt{train.py} & Numero di partite per assegnare score alle snapshot \\
+\texttt{reward\_config.mode} & \texttt{reinforce.py} & Tipo di reward \\
+\texttt{lambda\_margin} & \texttt{reinforce.py} & Peso del margine punti \\
+\texttt{baseline} & \texttt{reinforce.py} & Baseline REINFORCE \\
+\texttt{max\_update\_norm} & \texttt{policies.py}, \texttt{reinforce.py} & Clipping del gradiente \\
+\texttt{feature\_names} & \texttt{features.py} & Feature usate dalla policy \\
+\texttt{seed} & \texttt{env.py}, \texttt{evaluation.py} & Riproducibilità \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Cose importanti ancora da implementare}
+
+\subsection{Ablation sulla memoria}
+
+Serve una versione alternativa dell'estrattore di feature che non usa:
+
+\begin{itemize}
+  \item carte già giocate;
+  \item briscole uscite;
+  \item Assi e Tre usciti;
+  \item carte superiori non osservate.
+\end{itemize}
+
+Questo permetterebbe di confrontare:
+
+\[
+\text{policy con memoria} \quad \text{vs} \quad \text{policy senza memoria}.
+\]
+
+\subsection{Latest-only contro pool storico}
+
+Il codice supporta già una modalità \emph{latest-only}: basta usare
+\texttt{max\_size = 1} nel pool. In quel caso, quando viene salvata una nuova
+snapshot, il pool elimina le precedenti e mantiene solo l'ultima. Questa
+configurazione serve come ablation da confrontare con il pool storico completo.
+
+\subsection{Logging diagnostico}
+
+Mancano metriche comportamentali come:
+
+\begin{itemize}
+  \item frequenza di uso delle briscole;
+  \item punti vinti quando si usa una briscola;
+  \item carichi giocati quando il compagno sta vincendo;
+  \item errori apparenti nella fase finale;
+  \item distribuzione delle probabilità della policy.
+\end{itemize}
+
+\subsection{Salvataggio migliore dei checkpoint}
+
+Attualmente il training salva checkpoint tramite gli script. Sarebbe utile
+spostare salvataggio e caricamento dentro classi o funzioni del package. Il
+checkpoint salva già, per ogni snapshot, nome, parametri, update di creazione e
+eventuale \texttt{evaluation\_score}.
+
+\subsection{Baseline più forti}
+
+Random, greedy ed euristica sono sufficienti per iniziare, ma una valutazione
+più convincente potrebbe includere:
+
+\begin{itemize}
+  \item euristica esperta;
+  \item euristica aggressiva;
+  \item euristica conservativa;
+  \item policy addestrata con reward diversa.
+\end{itemize}
+
+\subsection{Belief state approssimato}
+
+La policy non calcola probabilità esplicite sulle carte nascoste. Un'estensione
+possibile è stimare:
+
+\[
+P(\text{compagno ha una briscola alta} \mid \text{storia pubblica}).
+\]
+
+Questo collegherebbe più direttamente il progetto alla teoria dei Bayesian
+POMDP.
+
+\subsection{Actor-critic o baseline appresa}
+
+Il progetto usa una baseline semplice, cioè la media del batch. Una possibile
+estensione è apprendere una funzione valore:
+
+\[
+V_\psi(M_t)
+\]
+
+e usare:
+
+\[
+G_t - V_\psi(M_t)
+\]
+
+come advantage. Questo trasformerebbe però il progetto verso actor-critic, che
+non è il nucleo attuale.
+
+\section{Conclusione}
+
+La cartella \texttt{briscola/} implementa già un progetto RL completo nella sua
+versione essenziale:
+
+\begin{itemize}
+  \item motore di gioco corretto;
+  \item osservazioni senza leakage;
+  \item policy softmax lineare;
+  \item feature interpretabili;
+  \item baseline;
+  \item REINFORCE con baseline;
+  \item self-play con pool storico;
+  \item valutazione e replay.
+\end{itemize}
+
+Le estensioni più importanti da aggiungere per una relazione sperimentale forte
+sono: ablation sulla memoria, confronto latest-only contro pool, logging
+diagnostico, metriche più ricche e gestione più strutturata dei checkpoint.
+
+\end{document}

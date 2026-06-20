@@ -8,6 +8,10 @@ batch_size: 500
 training_updates: 5000
 snapshot_interval: 50
 max_pool_size: 20
+pool_best_count: 4
+pool_recent_count: 10
+pool_eval_games: 50
+pool_eval_seed_start: 900000
 baseline: batch_mean
 learner_seat_sampling: uniform
 partner_sampling: uniform_pool
@@ -15,4 +19,3 @@ opponent_sampling: uniform_pool
 evaluation_mode:
   - greedy
   - stochastic
-

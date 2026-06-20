@@ -20,6 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from briscola.baselines import GreedyTrickPolicy, RandomPolicy, SimpleHeuristicPolicy
+from briscola.evaluation import evaluate_team_match
 from briscola.features import BriscolaFeatureExtractor
 from briscola.policies import LinearSoftmaxPolicy
 from briscola.reinforce import RewardConfig
@@ -36,6 +38,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=0.01)
     parser.add_argument("--snapshot-interval", type=int, default=10)
     parser.add_argument("--max-pool-size", type=int, default=20)
+    parser.add_argument("--pool-best-count", type=int, default=None)
+    parser.add_argument("--pool-recent-count", type=int, default=None)
+    parser.add_argument(
+        "--pool-eval-games",
+        type=int,
+        default=0,
+        help="Evaluate each saved snapshot on fixed seeds; 0 disables scoring.",
+    )
+    parser.add_argument("--pool-eval-seed-start", type=int, default=900_000)
     parser.add_argument(
         "--reward-mode",
         choices=["combined_terminal", "terminal_win", "trick_point_dense"],
@@ -66,6 +77,8 @@ def main() -> None:
     pool = SnapshotPool(
         feature_extractor=feature_extractor,
         max_size=args.max_pool_size,
+        best_count=args.pool_best_count,
+        recent_count=args.pool_recent_count,
     )
 
     reward_config = RewardConfig(
@@ -85,6 +98,7 @@ def main() -> None:
         pool=pool,
         config=train_config,
         seed=args.seed,
+        snapshot_score_fn=build_snapshot_score_fn(args),
     )
 
     with args.log.open("w", encoding="utf-8") as log_file:
@@ -93,6 +107,7 @@ def main() -> None:
             record = {
                 "update": update,
                 "pool_size": len(pool.snapshots),
+                "best_snapshot": best_snapshot_record(pool),
                 **asdict(stats),
             }
             log_file.write(json.dumps(record) + "\n")
@@ -149,11 +164,53 @@ def save_checkpoint(
                 "name": snapshot.name,
                 "theta": snapshot.theta,
                 "update_index": snapshot.update_index,
+                "evaluation_score": snapshot.evaluation_score,
             }
             for snapshot in pool.snapshots
         ],
     }
     path.write_text(json.dumps(checkpoint, indent=2), encoding="utf-8")
+
+
+def build_snapshot_score_fn(args: argparse.Namespace):
+    """Create the optional external score used to preserve strong snapshots."""
+
+    if args.pool_eval_games <= 0:
+        return None
+
+    seeds = list(
+        range(args.pool_eval_seed_start, args.pool_eval_seed_start + args.pool_eval_games)
+    )
+    baselines = [RandomPolicy(), GreedyTrickPolicy(), SimpleHeuristicPolicy()]
+
+    def score(policy: LinearSoftmaxPolicy, update_index: int) -> float:
+        results = [
+            evaluate_team_match(
+                policy_a=policy,
+                policy_b=baseline,
+                seeds=seeds,
+                paired=True,
+                greedy=True,
+            ).mean_point_difference
+            for baseline in baselines
+        ]
+        return sum(results) / len(results)
+
+    return score
+
+
+def best_snapshot_record(pool: SnapshotPool) -> dict[str, object] | None:
+    scored = [
+        snapshot for snapshot in pool.snapshots if snapshot.evaluation_score is not None
+    ]
+    if not scored:
+        return None
+    best = max(scored, key=lambda snapshot: (snapshot.evaluation_score, snapshot.update_index))
+    return {
+        "name": best.name,
+        "update_index": best.update_index,
+        "evaluation_score": best.evaluation_score,
+    }
 
 
 if __name__ == "__main__":

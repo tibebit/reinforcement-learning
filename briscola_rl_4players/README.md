@@ -843,17 +843,22 @@ Recommended pool parameters:
 ```text
 max_pool_size = 20
 snapshot_interval = 50 updates
+pool_best_count = 4
+pool_recent_count = 10
+pool_eval_games = optional
 sampling = uniform
 ```
 
 If the pool exceeds the maximum size, keep:
 
 - the initial snapshot;
-- the best evaluated snapshot;
+- the best evaluated snapshots, when evaluation scores are available;
 - a few recent snapshots;
 - a time-spaced subset of older snapshots.
 
 This avoids both overfitting to the latest policy and uncontrolled pool growth.
+If `pool_eval_games` is zero, no external score is assigned and the pool still
+keeps diversity through recent and time-spaced historical snapshots.
 
 ## Hyperparameters
 
@@ -1304,6 +1309,10 @@ python3 scripts/train.py \
   --batch-size 100 \
   --learning-rate 0.01 \
   --snapshot-interval 10 \
+  --max-pool-size 20 \
+  --pool-best-count 4 \
+  --pool-recent-count 10 \
+  --pool-eval-games 20 \
   --output experiments/results/checkpoint.json \
   --log experiments/results/train_log.jsonl
 ```
@@ -1359,9 +1368,33 @@ http://127.0.0.1:8000
 ```
 
 The human plays as `P1` on Team A. `P3` is the partner, while `P2` and `P4`
-are opponents. The interface supports random, greedy, and heuristic bot
-policies. After each human move, the server automatically advances all bot
-turns until the next human decision or the end of the match.
+are opponents. The interface supports random, greedy, heuristic, and trained
+learner-checkpoint bot policies.
+
+The UI lets you choose:
+
+- policy for `P2`, the first opponent;
+- policy for `P3`, the partner;
+- policy for `P4`, the second opponent;
+- learner checkpoint path, by default `experiments/results/checkpoint.json`;
+- stochastic or greedy bot action selection.
+- whether learner bots should be updated after each completed human game;
+- the small web-interface learning rate used for that online update.
+
+To play with the learner, set `P3 Partner` to `Learner checkpoint`. To play
+against the learner, set `P2 Opponent`, `P4 Opponent`, or both to
+`Learner checkpoint`.
+
+After each human move, the server automatically advances all bot turns until
+the next human decision or the end of the match. The table highlights the
+current player and shows each bot's policy under its seat label.
+
+If `Learn after game` is enabled and at least one bot is using `Learner
+checkpoint`, the interface applies a small REINFORCE update to the learner at
+the end of the match. The update is kept in server memory, so pressing `New Game
+with Updated Learner` starts another match with the updated parameters. This
+interactive update is meant for demonstration and inspection; official
+evaluation should still use frozen checkpoints with no online updates.
 
 ## Development Phases
 
