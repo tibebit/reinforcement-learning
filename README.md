@@ -109,7 +109,15 @@ configs/train_pool_selfplay.yaml
 Run evaluation:
 
 ```bash
-PYTHONPATH=. python scripts/evaluate.py --config configs/eval.yaml
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json
+```
+
+Available opponents:
+
+```bash
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent random
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent greedy
+PYTHONPATH=. python scripts/evaluate.py --checkpoint experiments/results/checkpoint.json --opponent heuristic
 ```
 
 ## Web Demo
@@ -118,6 +126,10 @@ Start the local playable web interface:
 
 ```bash
 PYTHONPATH=. python scripts/play_web.py
+```
+
+```bash
+PYTHONPATH=. python scripts/play_web_learner.py --checkpoint experiments/results/checkpoint.json
 ```
 
 Then open:

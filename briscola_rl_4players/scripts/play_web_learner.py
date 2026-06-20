@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Local interactive web interface for four-player Briscola.
+"""Local interactive web interface for four-player Briscola with a learned partner.
 
 Run with:
 
-    python3 scripts/play_web.py
+    python3 scripts/play_web_learner.py --checkpoint experiments/results/checkpoint.json
 
 Then open http://127.0.0.1:8000 in a browser. The human plays as player 0,
-while partner and opponents are controlled by baseline policies.
+while the partner is controlled by a learned policy and opponents are baselines.
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from briscola.baselines import GreedyTrickPolicy, RandomPolicy, SimpleHeuristicPolicy
 from briscola.cards import Card, PlayedCard, card_from_id
 from briscola.env import FourPlayerBriscolaEnv
-from briscola.policies import Policy
+from briscola.features import BriscolaFeatureExtractor
+from briscola.policies import LinearSoftmaxPolicy, Policy
 from briscola.rules import partner_of, team_of
 
 
@@ -55,9 +56,33 @@ class WebSession:
 
 
 SESSIONS: dict[str, WebSession] = {}
+LEARNER_POLICY: LinearSoftmaxPolicy | None = None
 
 
-def create_policy(name: str) -> Policy:
+def load_checkpoint(path: Path) -> dict[str, object]:
+    """Load and parse a training checkpoint."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def policy_from_checkpoint(
+    checkpoint: dict[str, object],
+    name: str = "learner",
+) -> LinearSoftmaxPolicy:
+    """Build the learner policy from a train.py checkpoint."""
+    feature_names = checkpoint["feature_names"]
+    learner = checkpoint["learner"]
+    if not isinstance(feature_names, list) or not isinstance(learner, dict):
+        raise ValueError("Invalid checkpoint format")
+    feature_extractor = BriscolaFeatureExtractor(feature_names=list(feature_names))
+    return LinearSoftmaxPolicy(
+        theta=list(learner["theta"]),
+        feature_extractor=feature_extractor,
+        name=name,
+    )
+
+
+def create_baseline_policy(name: str) -> Policy:
+    """Create a baseline policy by name."""
     if name == "random":
         return RandomPolicy()
     if name == "greedy":
@@ -67,16 +92,20 @@ def create_policy(name: str) -> Policy:
     raise ValueError(f"Unknown policy: {name}")
 
 
-def new_session(seed: int | None, partner: str, opponents: str) -> tuple[str, WebSession]:
+def new_session(seed: int | None, opponents: str) -> tuple[str, WebSession]:
     if seed is None:
         seed = random.randrange(1_000_000_000)
     human_id = 0
     env = FourPlayerBriscolaEnv(seed=seed, start_player=seed % 4)
+    
+    if LEARNER_POLICY is None:
+        raise RuntimeError("Learner policy not loaded")
+    
     session = WebSession(
         env=env,
         human_id=human_id,
-        partner_policy=create_policy(partner),
-        opponent_policy=create_policy(opponents),
+        partner_policy=LEARNER_POLICY,
+        opponent_policy=create_baseline_policy(opponents),
         rng=random.Random(seed + 40_000),
     )
     session.events.append(f"New game started with seed {seed}.")
@@ -310,9 +339,8 @@ class BriscolaRequestHandler(BaseHTTPRequestHandler):
         data = self.read_json()
         seed_value = data.get("seed")
         seed = int(seed_value) if seed_value not in (None, "") else None
-        partner = str(data.get("partner", "heuristic"))
         opponents = str(data.get("opponents", "greedy"))
-        session_id, session = new_session(seed=seed, partner=partner, opponents=opponents)
+        session_id, session = new_session(seed=seed, opponents=opponents)
         self.send_json(state_payload(session_id, session))
 
     def handle_play(self) -> None:
@@ -384,16 +412,30 @@ class BriscolaRequestHandler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the local Briscola web UI.")
+    parser = argparse.ArgumentParser(
+        description="Run the local Briscola web UI with a learned partner."
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        required=True,
+        help="Path to the training checkpoint (from train.py).",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     return parser.parse_args()
 
 
 def main() -> None:
+    global LEARNER_POLICY
+    
     args = parse_args()
+    checkpoint = load_checkpoint(args.checkpoint)
+    LEARNER_POLICY = policy_from_checkpoint(checkpoint, name="learner")
+    
     server = ThreadingHTTPServer((args.host, args.port), BriscolaRequestHandler)
-    print(f"Briscola interface running at http://{args.host}:{args.port}")
+    print(f"Briscola web UI with learned partner running at http://{args.host}:{args.port}")
+    print(f"Learner policy loaded from: {args.checkpoint}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()

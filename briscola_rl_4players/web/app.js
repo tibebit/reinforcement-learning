@@ -22,9 +22,13 @@ const elements = {
   opponentPolicy: document.getElementById("opponentPolicy"),
   seedInput: document.getElementById("seedInput"),
   newGameButton: document.getElementById("newGameButton"),
+  nextButton: document.getElementById("nextButton"),
+  collectButton: document.getElementById("collectButton"),
 };
 
 elements.newGameButton.addEventListener("click", () => startNewGame());
+elements.nextButton.addEventListener("click", () => nextStep());
+elements.collectButton.addEventListener("click", () => collectTrick());
 
 async function startNewGame() {
   elements.newGameButton.disabled = true;
@@ -53,6 +57,22 @@ async function playCard(cardId) {
   render(data);
 }
 
+async function nextStep() {
+  if (!state.sessionId) {
+    return;
+  }
+  const data = await postJson("/api/next", { session_id: state.sessionId });
+  render(data);
+}
+
+async function collectTrick() {
+  if (!state.sessionId) {
+    return;
+  }
+  const data = await postJson("/api/collect", { session_id: state.sessionId });
+  render(data);
+}
+
 async function postJson(url, payload) {
   const response = await fetch(url, {
     method: "POST",
@@ -77,6 +97,8 @@ function render(data) {
   elements.deckCount.textContent = data.deck_count;
   elements.revealedTrump.replaceWith(renderMiniCard(data.revealed_trump, "revealedTrump"));
   elements.revealedTrump = document.getElementById("revealedTrump");
+  elements.nextButton.disabled = !data.can_next;
+  elements.collectButton.disabled = !data.can_collect;
 
   renderSeats(data);
   renderCurrentTrick(data.current_trick);
@@ -106,14 +128,9 @@ function renderCurrentTrick(cards) {
   }
 
   for (const played of cards) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "played-card";
-    const owner = document.createElement("div");
-    owner.className = "owner";
-    owner.textContent = `P${played.player_id + 1}`;
-    wrapper.appendChild(owner);
-    wrapper.appendChild(renderCard(played.card, false));
-    elements.trickArea.appendChild(wrapper);
+    elements.trickArea.appendChild(
+      renderCard(played.card, false, `P${played.player_id + 1}`)
+    );
   }
 }
 
@@ -128,21 +145,21 @@ function renderLastTrick(data) {
   }
 
   for (const played of data.last_completed_trick) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "played-card";
-    const owner = document.createElement("div");
-    owner.className = "owner";
-    owner.style.color = "#66716d";
-    owner.textContent = `P${played.player_id + 1}`;
-    wrapper.appendChild(owner);
-    wrapper.appendChild(renderMiniCard(played.card));
-    elements.lastTrickArea.appendChild(wrapper);
+    elements.lastTrickArea.appendChild(
+      renderMiniCard(played.card, null, `P${played.player_id + 1}`)
+    );
   }
 }
 
 function renderHand(data) {
   elements.handArea.innerHTML = "";
-  elements.turnHint.textContent = data.human_turn ? "Choose a card" : "";
+  if (data.pending_collect) {
+    elements.turnHint.textContent = "Press Collect Trick";
+  } else if (data.human_turn) {
+    elements.turnHint.textContent = "Choose a card";
+  } else {
+    elements.turnHint.textContent = "Press Next";
+  }
   const legalIds = new Set(data.legal_action_ids);
 
   for (const card of data.human_hand) {
@@ -194,29 +211,32 @@ function renderEvents(events) {
   }
 }
 
-function renderCard(card, asButton) {
+function renderCard(card, asButton, ownerLabel = null) {
   const node = document.createElement(asButton ? "button" : "div");
   node.className = `card suit-${card.suit}`;
   node.type = asButton ? "button" : undefined;
   node.setAttribute("aria-label", card.label);
 
+  if (ownerLabel) {
+    const owner = document.createElement("div");
+    owner.className = "owner-badge owner-badge-card";
+    owner.textContent = ownerLabel;
+    node.appendChild(owner);
+  }
+
   const rank = document.createElement("div");
   rank.className = "rank";
-  rank.textContent = card.rank_label;
-
-  const suit = document.createElement("div");
-  suit.className = "suit";
-  suit.textContent = card.suit_label;
+  rank.textContent = `${shortRank(card.rank)} ${suitEmoji(card.suit)}`;
 
   const points = document.createElement("div");
   points.className = "points";
   points.textContent = `${card.points} pts`;
 
-  node.append(rank, suit, points);
+  node.append(rank, points);
   return node;
 }
 
-function renderMiniCard(card, id) {
+function renderMiniCard(card, id, ownerLabel = null) {
   if (!card) {
     const empty = document.createElement("div");
     empty.className = "mini-card empty-card";
@@ -229,29 +249,56 @@ function renderMiniCard(card, id) {
   node.className = `mini-card suit-${card.suit}`;
   node.id = id || "";
 
+  if (ownerLabel) {
+    const owner = document.createElement("div");
+    owner.className = "owner-badge owner-badge-card";
+    owner.textContent = ownerLabel;
+    node.appendChild(owner);
+  }
+
   const rank = document.createElement("div");
   rank.className = "rank";
-  rank.textContent = card.rank_label;
-
-  const suit = document.createElement("div");
-  suit.className = "suit";
-  suit.textContent = card.suit_label;
+  rank.textContent = `${shortRank(card.rank)} ${suitEmoji(card.suit)}`;
 
   const points = document.createElement("div");
   points.className = "points";
   points.textContent = `${card.points} pts`;
 
-  node.append(rank, suit, points);
+  node.append(rank, points);
   return node;
 }
 
 function labelSuit(suit) {
   return {
-    cups: "Cups",
-    coins: "Coins",
-    clubs: "Clubs",
-    swords: "Swords",
+    cups: "🏆 Cups",
+    coins: "🪙 Coins",
+    clubs: "🌳 Clubs",
+    swords: "⚔️ Swords",
   }[suit] || "-";
+}
+
+function suitEmoji(suit) {
+  return {
+    cups: "🏆",
+    coins: "🪙",
+    clubs: "🌳",
+    swords: "⚔️",
+  }[suit] || "";
+}
+
+function shortRank(rank) {
+  return {
+    ace: "A",
+    three: "3",
+    king: "K",
+    knight: "Q",
+    jack: "J",
+    seven: "7",
+    six: "6",
+    five: "5",
+    four: "4",
+    two: "2",
+  }[rank] || "?";
 }
 
 function disableHand(disabled) {

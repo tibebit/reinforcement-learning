@@ -9,6 +9,7 @@ learner parameters and all frozen snapshots in the pool.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import random
 import sys
@@ -30,29 +31,85 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train a four-player Briscola RL policy with REINFORCE.",
     )
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--updates", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=100)
-    parser.add_argument("--learning-rate", type=float, default=0.01)
-    parser.add_argument("--snapshot-interval", type=int, default=10)
-    parser.add_argument("--max-pool-size", type=int, default=20)
+    parser.add_argument("--config", type=Path, default=None, help="Optional YAML config file.")
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--updates", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--learning-rate", type=float, default=None)
+    parser.add_argument("--snapshot-interval", type=int, default=None)
+    parser.add_argument("--max-pool-size", type=int, default=None)
     parser.add_argument(
         "--reward-mode",
         choices=["combined_terminal", "terminal_win", "trick_point_dense"],
-        default="combined_terminal",
+        default=None,
     )
-    parser.add_argument("--lambda-margin", type=float, default=0.2)
-    parser.add_argument("--baseline", choices=["batch_mean", "none"], default="batch_mean")
-    parser.add_argument("--max-update-norm", type=float, default=5.0)
-    parser.add_argument("--init-scale", type=float, default=0.01)
-    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "experiments/results/checkpoint.json")
-    parser.add_argument("--log", type=Path, default=PROJECT_ROOT / "experiments/results/train_log.jsonl")
-    parser.add_argument("--print-every", type=int, default=10)
+    parser.add_argument("--lambda-margin", type=float, default=None)
+    parser.add_argument("--baseline", choices=["batch_mean", "none"], default=None)
+    parser.add_argument("--max-update-norm", type=float, default=None)
+    parser.add_argument("--init-scale", type=float, default=None)
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--log", type=Path, default=None)
+    parser.add_argument("--print-every", type=int, default=None)
     return parser.parse_args()
 
 
+def load_config(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+
+    yaml = importlib.import_module("yaml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Training config must be a YAML mapping")
+    return data
+
+
+def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
+    config = load_config(args.config)
+
+    policy_type = config.get("policy_type", "linear_softmax")
+    if policy_type != "linear_softmax":
+        raise ValueError(f"Unsupported policy_type: {policy_type}")
+
+    resolved = argparse.Namespace()
+    resolved.config = args.config
+    resolved.seed = args.seed if args.seed is not None else int(config.get("seed", 0))
+    resolved.updates = args.updates if args.updates is not None else int(config.get("training_updates", 100))
+    resolved.batch_size = args.batch_size if args.batch_size is not None else int(config.get("batch_size", 100))
+    resolved.learning_rate = (
+        args.learning_rate if args.learning_rate is not None else float(config.get("learning_rate", 0.01))
+    )
+    resolved.snapshot_interval = (
+        args.snapshot_interval if args.snapshot_interval is not None else int(config.get("snapshot_interval", 10))
+    )
+    resolved.max_pool_size = (
+        args.max_pool_size if args.max_pool_size is not None else int(config.get("max_pool_size", 20))
+    )
+    resolved.reward_mode = args.reward_mode if args.reward_mode is not None else str(config.get("reward_mode", "combined_terminal"))
+    resolved.lambda_margin = (
+        args.lambda_margin if args.lambda_margin is not None else float(config.get("lambda_margin", 0.2))
+    )
+    resolved.baseline = args.baseline if args.baseline is not None else str(config.get("baseline", "batch_mean"))
+    resolved.max_update_norm = (
+        args.max_update_norm if args.max_update_norm is not None else float(config.get("max_update_norm", 5.0))
+    )
+    resolved.init_scale = args.init_scale if args.init_scale is not None else float(config.get("init_scale", 0.01))
+    resolved.output = args.output if args.output is not None else Path(
+        config.get("output", PROJECT_ROOT / "experiments/results/checkpoint.json")
+    )
+    resolved.log = args.log if args.log is not None else Path(
+        config.get("log", PROJECT_ROOT / "experiments/results/train_log.jsonl")
+    )
+    resolved.print_every = (
+        args.print_every if args.print_every is not None else int(config.get("print_every", 10))
+    )
+    return resolved
+
+
 def main() -> None:
-    args = parse_args()
+    args = resolve_args(parse_args())
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.log.parent.mkdir(parents=True, exist_ok=True)
 
@@ -132,9 +189,10 @@ def save_checkpoint(
 ) -> None:
     """Write all data needed by evaluate.py to a JSON checkpoint."""
 
-    config = vars(args).copy()
-    config["output"] = str(args.output)
-    config["log"] = str(args.log)
+    config = {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in vars(args).items()
+    }
 
     checkpoint = {
         "format": "briscola_rl_4players_checkpoint_v1",
